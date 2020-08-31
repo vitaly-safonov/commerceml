@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Created by PhpStorm.
  * User: Ivan Koretskiy aka gillbeits[at]gmail.com
@@ -9,9 +10,6 @@
 namespace CommerceMLParser;
 
 
-use CommerceMLParser\Creational\Singleton;
-use CommerceMLParser\Event\ProductEvent;
-use CommerceMLParser\Event\StartEvent;
 use CommerceMLParser\Exception\NoEventException;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
@@ -19,11 +17,9 @@ use Symfony\Component\EventDispatcher\EventDispatcher;
  * Class Parser
  * @package CommerceMLParser
  *
- * @method static Parser getInstance(Factory $factory = null)
  */
-class Parser extends EventDispatcher {
-    use Singleton;
-
+class Parser extends EventDispatcher
+{
     /** @var \XMLReader  */
     protected $xmlReader;
     /** @var Factory  */
@@ -43,31 +39,80 @@ class Parser extends EventDispatcher {
     private $bulk_rows_counter = [];
 
     /**
-     * @param Factory|null $factory
+     * @var static The stored singleton instance
      */
-    protected function __init(Factory $factory = null)
+    protected static $instance;
+
+    /**
+     * Creates the original or retrieves the stored singleton instance
+     * @param Factory $factory
+     * @return static
+     */
+    public static function getInstance(Factory $factory = null)
+    {
+        if (!static::$instance) {
+            static::$instance = (new \ReflectionClass(get_called_class()))
+                ->newInstanceWithoutConstructor();
+        }
+        call_user_func_array([static::$instance, "create"], func_get_args());
+        return static::$instance;
+    }
+
+    /**
+     * The constructor is disabled
+     *
+     * @throws \RuntimeException if called
+     */
+    public function __construct()
+    {
+        throw new \RuntimeException('You may not explicitly instantiate this object, because it is a singleton.');
+    }
+
+    /**
+     * Cloning is disabled
+     *
+     * @throws \RuntimeException if called
+     */
+    public function __clone()
+    {
+        throw new \RuntimeException('You may not clone this object, because it is a singleton.');
+    }
+
+    /**
+     * Unserialization is disabled
+     *
+     * @throws \RuntimeException if called
+     */
+    public function __wakeup()
+    {
+        throw new \RuntimeException('You may not unserialize this object, because it is a singleton.');
+    }
+
+    /**
+     * Unserialization is disabled
+     *
+     * @throws \RuntimeException if called
+     */
+    public function unserialize($serialized_data)
+    {
+        throw new \RuntimeException('You may not unserialize this object, because it is a singleton.');
+    }
+
+    protected function create(Factory $factory = null)
     {
         if (null == $factory) {
             $factory = new Factory();
-            $this->factory = $factory;
         }
 
         $this->xmlReader = new \XMLReader();
-        // Default parse rules
-        foreach ($factory->getObjects() as $path => $object) {
-            $this->registerPath($path, $this->dispatchObjectCallable());
+        $this->factory = $factory;
 
-            $event = explode('\\', $object['event']);
-            $event = end($event);
+        $this->registerPath('КоммерческаяИнформация/Классификатор/Группы/Группа', $this->dispatchObjectCallable());
+        $this->registerPath('КоммерческаяИнформация/Классификатор/Свойства/СвойствоНоменклатуры', $this->dispatchObjectCallable());
+        $this->registerPath('КоммерческаяИнформация/Каталог/Товары/Товар', $this->dispatchObjectCallable());
 
-            $this->addListener($event, function (Event $e, $eventName, EventDispatcher $dispatcher) {
-                $_e = StartEvent::getInstance($name = $eventName . 'Start');
-                if (!$_e->isPropagationStopped()) {
-                    $dispatcher->dispatch($_e, $name);
-                    $_e->stopPropagation();
-                }
-            });
-        }
+        $this->registerPath('КоммерческаяИнформация/ПакетПредложений/ТипыЦен/ТипЦены', $this->dispatchObjectCallable());
+        $this->registerPath('КоммерческаяИнформация/ПакетПредложений/Предложения/Предложение', $this->dispatchObjectCallable());
     }
 
     /**
@@ -81,7 +126,7 @@ class Parser extends EventDispatcher {
             }
             $event = explode('\\', $object[1]['event']);
             $event = end($event);
-            $this->dispatch(new $object[1]['event']($object[0], $self), $event);
+            $this->dispatch($event, new $object[1]['event']($object[0], $self));
         };
     }
 
@@ -93,11 +138,6 @@ class Parser extends EventDispatcher {
         return $this->bulk_rows_counter[$event];
     }
 
-    /**
-     * @param $file
-     * @throws Exception\NoObjectException
-     * @throws Exception\NoPathException
-     */
     public function parse($file)
     {
         $this->currentFile = new \SplFileObject($file);
@@ -127,25 +167,22 @@ class Parser extends EventDispatcher {
         return $this;
     }
 
-    /**
-     * @throws Exception\NoObjectException
-     * @throws Exception\NoPathException
-     */
     protected function read()
     {
         $shop = null;
-        while ($this->xmlReader->read()) {
-            if ($this->xmlReader->nodeType == \XMLReader::END_ELEMENT) {
+        $xml = $this->xmlReader;
+        while ($xml->read()) {
+            if ($xml->nodeType == \XMLReader::END_ELEMENT) {
                 array_pop($this->path);
                 continue;
             }
 
 
-            if ($this->xmlReader->nodeType == \XMLReader::ELEMENT) {
-                array_push($this->path, $this->xmlReader->name);
+            if ($xml->nodeType == \XMLReader::ELEMENT) {
+                array_push($this->path, $xml->name);
                 $path = implode('/', $this->path);
 
-                if ($this->xmlReader->isEmptyElement) {
+                if ($xml->isEmptyElement) {
                     array_pop($this->path);
                 }
 
@@ -158,7 +195,7 @@ class Parser extends EventDispatcher {
 
         foreach ($this->bulk_rows as $event => $rows) {
             if (!empty($rows)) {
-                $this->dispatch(new BulkEvent($event, $this), 'BulkUpload');
+                $this->dispatch('BulkUpload', new BulkEvent($event, $this));
             }
         }
     }
@@ -168,14 +205,14 @@ class Parser extends EventDispatcher {
         $this->bulk_rows[$event][] = $obj;
         @$this->bulk_rows_counter[$event]++;
         if (count($this->bulk_rows[$event]) >= $this->bulk_count) {
-            $this->dispatch(new BulkEvent($event, $this), 'BulkUpload');
+            $this->dispatch('BulkUpload', new BulkEvent($event, $this));
             $this->bulk_rows[$event] = [];
         }
     }
 
     public function getRows($event = null)
     {
-        return null!== $event ? $this->bulk_rows[$event] : $this->bulk_rows;
+        return null !== $event ? $this->bulk_rows[$event] : $this->bulk_rows;
     }
 
     /**
@@ -198,19 +235,10 @@ class Parser extends EventDispatcher {
 
     /**
      * @param int $bulk_count
-     * @return Parser
      */
     public function setBulkCount($bulk_count)
     {
         $this->bulk_count = $bulk_count;
         return $this;
-    }
-
-    /**
-     * @return Factory
-     */
-    public function getFactory()
-    {
-        return $this->factory;
     }
 }
