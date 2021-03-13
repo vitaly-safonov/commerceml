@@ -86,6 +86,12 @@ class Product extends Model implements IdModel
             }
         }
 
+        if ($xml->ЗначенияСвойства) {
+            foreach ($xml->ЗначенияСвойства as $prop) {
+                $this->properties->add(new PropertyValue($prop));
+            }
+        }
+
         if ($xml->Картинка) {
             $dirName = dirname(Parser::getInstance()->getCurrentFile()->getRealPath());
             foreach ($xml->Картинка as $image) {
